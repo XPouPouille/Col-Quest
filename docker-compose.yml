@@ -1,0 +1,68 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: colquest-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-colquest}
+      POSTGRES_USER: ${POSTGRES_USER:-colquest}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - colquest_db:/var/lib/postgresql/data
+    networks:
+      - internal
+
+  backend:
+    build: ./backend
+    container_name: colquest-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-colquest}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-colquest}
+      SECRET_KEY: ${SECRET_KEY}
+      STRAVA_CLIENT_ID: ${STRAVA_CLIENT_ID}
+      STRAVA_CLIENT_SECRET: ${STRAVA_CLIENT_SECRET}
+      GARMIN_EMAIL: ${GARMIN_EMAIL}
+      GARMIN_PASSWORD: ${GARMIN_PASSWORD}
+      FRONTEND_URL: https://${DOMAIN}
+      BACKEND_URL: https://${DOMAIN}/api
+    depends_on:
+      - db
+    networks:
+      - internal
+      - frontend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.colquest-api.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)"
+      - "traefik.http.routers.colquest-api.entrypoints=websecure"
+      - "traefik.http.routers.colquest-api.tls.certresolver=letsencrypt"
+      - "traefik.http.services.colquest-api.loadbalancer.server.port=8000"
+      - "traefik.http.middlewares.colquest-strip.stripprefix.prefixes=/api"
+      - "traefik.http.routers.colquest-api.middlewares=colquest-strip"
+      - "traefik.docker.network=frontend"
+
+  frontend:
+    build: ./frontend
+    container_name: colquest-frontend
+    restart: unless-stopped
+    environment:
+      VITE_API_URL: https://${DOMAIN}/api
+    depends_on:
+      - backend
+    networks:
+      - frontend
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.colquest.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.colquest.entrypoints=websecure"
+      - "traefik.http.routers.colquest.tls.certresolver=letsencrypt"
+      - "traefik.http.services.colquest.loadbalancer.server.port=80"
+      - "traefik.docker.network=frontend"
+
+volumes:
+  colquest_db:
+
+networks:
+  internal:
+  frontend:
+    external: true
