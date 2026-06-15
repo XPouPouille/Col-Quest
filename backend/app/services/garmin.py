@@ -1,46 +1,42 @@
 import garth
 import tempfile
+import shutil
+import json
 import os
 from datetime import datetime, date
 from pathlib import Path
 from ..config import settings
 
-SESSION_FILE = Path("/tmp/garmin_session")
-
-
-def _get_client():
-    client = garth.Client()
-    if SESSION_FILE.exists():
-        client.load(str(SESSION_FILE))
-    return client
-
 
 async def connect(email: str = None, password: str = None) -> str:
-    """Authenticate with Garmin Connect. Returns serialized session."""
+    """Authenticate with Garmin Connect. Returns serialized session as JSON."""
     email = email or settings.garmin_email
     password = password or settings.garmin_password
 
     client = garth.Client()
     client.login(email, password)
 
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        fname = f.name
-
-    client.dump(fname)
-    session_data = Path(fname).read_text()
-    os.unlink(fname)
-
-    return session_data
+    # garth.dump() expects a directory, not a file
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        client.dump(tmp_dir)
+        files = {p.name: p.read_text() for p in Path(tmp_dir).iterdir() if p.is_file()}
+        return json.dumps(files)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def load_client_from_session(session_json: str) -> garth.Client:
-    client = garth.Client()
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        f.write(session_json)
-        fname = f.name
-    client.load(fname)
-    os.unlink(fname)
-    return client
+    files = json.loads(session_json)
+    tmp_dir = tempfile.mkdtemp()
+    try:
+        for name, content in files.items():
+            (Path(tmp_dir) / name).write_text(content)
+        client = garth.Client()
+        client.load(tmp_dir)
+        return client
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 async def fetch_activities(session_json: str, start_date: date = None) -> list[dict]:
